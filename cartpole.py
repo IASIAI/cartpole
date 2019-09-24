@@ -4,7 +4,8 @@ from collections import deque
 
 import gym
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor, AdaBoostRegressor
+from gym.envs.classic_control import CartPoleEnv
+from sklearn.ensemble import AdaBoostRegressor
 from sklearn.linear_model import SGDRegressor
 from sklearn.multioutput import MultiOutputRegressor
 
@@ -13,15 +14,15 @@ from scores.score_logger import ScoreLogger
 ENV_NAME = "CartPole-v1"
 
 GAMMA = 0.95
-LEARNING_RATE = 0.001 # unused as we use Experience Replay type of Q-Learning
+LEARNING_RATE = 0.001  # unused as we use Experience Replay type of Q-Learning
 # See more on Experience Replay here: https://datascience.stackexchange.com/questions/20535/what-is-experience-replay-and-what-are-its-benefits
 
-MEMORY_SIZE = 1000 # used only for Non-Incremental learning, i.e. partial_fit=False
+MEMORY_SIZE = 100000  # used only for Non-Incremental learning, i.e. partial_fit=False
 BATCH_SIZE = 20
 
 EXPLORATION_MAX = 1.0
-EXPLORATION_MIN = 0.05
-EXPLORATION_DECAY = 0.96
+EXPLORATION_MIN = 0.01
+EXPLORATION_DECAY = 0.995
 
 
 class DQNSolver:
@@ -65,34 +66,28 @@ class DQNSolver:
     def experience_replay(self):
         if len(self.memory) < BATCH_SIZE:
             return
-        if self._is_partial_fit:
-            batch = list(self.memory)
-            # if we use Incremental Model, we don't have to keep whole memory, as we use just last batch
-            # and the rest of the history is stored within the model, indirectly through learning
-            self.memory = deque(maxlen=BATCH_SIZE)
-        else:
-            batch = random.sample(self.memory, int(len(self.memory)/1))
         X = []
         targets = []
+        batch = random.sample(self.memory, BATCH_SIZE)
+        if len(self.memory) % 1000 == 0 and len(self.memory)< MEMORY_SIZE:
+            print(f"Memory size: {len(self.memory)}")
         for state, action, reward, state_next, terminal in batch:
             q_update = reward
-            if not terminal:
-                if self.isFit:
-                    q_update = (reward + GAMMA * np.amax(self.model.predict(state_next)[0]))
-                else:
-                    q_update = reward
             if self.isFit:
-                q_values = self.model.predict(state)
+                if not terminal:
+                    q_update = (reward + GAMMA * np.amax(self.model.predict(state_next)[0]))
+                q_values = self.model.predict(state)[0]
             else:
-                q_values = np.zeros(self.action_space).reshape(1, -1)
-            q_values[0][action] = q_update
-            
-            X.append(list(state[0]))
-            targets.append(q_values[0])
+                q_values = np.zeros(self.action_space)
+            q_values[action] = q_update
 
-        if self._is_partial_fit:
-            self.model.partial_fit(X, targets)
-        else:
+            if self._is_partial_fit:
+                self.model.partial_fit([list(state[0])], [q_values])
+            else:
+                X.append(list(state[0]))
+                targets.append(q_values)
+
+        if not self._is_partial_fit:
             self.model.fit(X, targets)
 
         self.isFit = True
@@ -101,7 +96,7 @@ class DQNSolver:
 
 
 def cartpole():
-    env = gym.make(ENV_NAME)
+    env: CartPoleEnv = gym.make(ENV_NAME)
     score_logger = ScoreLogger(ENV_NAME)
     observation_space = env.observation_space.shape[0]
     action_space = env.action_space.n
