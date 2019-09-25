@@ -5,6 +5,7 @@ from collections import deque
 import gym
 import numpy as np
 from gym.envs.classic_control import CartPoleEnv
+from lightgbm import LGBMRegressor
 from sklearn.ensemble import AdaBoostRegressor
 from sklearn.linear_model import SGDRegressor
 from sklearn.multioutput import MultiOutputRegressor
@@ -17,13 +18,12 @@ GAMMA = 0.95
 LEARNING_RATE = 0.001  # unused as we use Experience Replay type of Q-Learning
 # See more on Experience Replay here: https://datascience.stackexchange.com/questions/20535/what-is-experience-replay-and-what-are-its-benefits
 
-MEMORY_SIZE = 100000  # used only for Non-Incremental learning, i.e. partial_fit=False
+MEMORY_SIZE = 1000
 BATCH_SIZE = 20
 
 EXPLORATION_MAX = 1.0
-EXPLORATION_MIN = 0.01
-EXPLORATION_DECAY = 0.995
-
+EXPLORATION_MIN = 0.05
+EXPLORATION_DECAY = 0.96
 
 class DQNSolver:
 
@@ -44,9 +44,9 @@ class DQNSolver:
 
             # Ex:
             #regressor = RandomForestRegressor(max_depth=2, random_state=0, n_estimators=100)
-            #regressor = LGBMRegressor(n_estimators=100, n_jobs=-1)
+            regressor = LGBMRegressor(n_estimators=100, n_jobs=-1)
 
-            regressor = AdaBoostRegressor(n_estimators=10)
+            #regressor = AdaBoostRegressor(n_estimators=10)
             self.model = MultiOutputRegressor(regressor)
 
         self.isFit = False
@@ -68,7 +68,10 @@ class DQNSolver:
             return
         X = []
         targets = []
-        batch = random.sample(self.memory, BATCH_SIZE)
+        if self._is_partial_fit:
+            batch = random.sample(self.memory, BATCH_SIZE)
+        else:
+            batch = random.sample(self.memory, int(len(self.memory) / 1))
         if len(self.memory) % 1000 == 0 and len(self.memory)< MEMORY_SIZE:
             print(f"Memory size: {len(self.memory)}")
         for state, action, reward, state_next, terminal in batch:
@@ -110,7 +113,7 @@ def cartpole():
         while True:
             step += 1
             # comment next line for faster learning, without stopping to show the GUI
-            env.render()
+            #env.render()
             action = dqn_solver.act(state)
             state_next, reward, terminal, info = env.step(action)
             reward = reward if not terminal else -reward
