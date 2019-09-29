@@ -1,24 +1,36 @@
+import threading
+import time
 from statistics import mean
+
 import matplotlib
+from plotly.subplots import make_subplots
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from collections import deque
 import os
 import csv
 import numpy as np
+import pandas as pd
+from plotly import graph_objects as go
 
 SCORES_CSV_PATH = "./scores/scores.csv"
 SCORES_PNG_PATH = "./scores/scores.png"
 SOLVED_CSV_PATH = "./scores/solved.csv"
 SOLVED_PNG_PATH = "./scores/solved.png"
 AVERAGE_SCORE_TO_SOLVE = 195
-CONSECUTIVE_RUNS_TO_SOLVE = 100
+CONSECUTIVE_RUNS_TO_SOLVE = 200
 
 
 class ScoreLogger:
 
     def __init__(self, env_name):
         self.scores = deque(maxlen=CONSECUTIVE_RUNS_TO_SOLVE)
+        self.averages = deque(maxlen=CONSECUTIVE_RUNS_TO_SOLVE)
+        self.exp_rates = deque(maxlen=CONSECUTIVE_RUNS_TO_SOLVE)
+        self.time_hist = deque(maxlen=CONSECUTIVE_RUNS_TO_SOLVE)
+        self.t1 = time.time()
+
         self.env_name = env_name
 
         if os.path.exists(SCORES_PNG_PATH):
@@ -26,7 +38,16 @@ class ScoreLogger:
         if os.path.exists(SCORES_CSV_PATH):
             os.remove(SCORES_CSV_PATH)
 
-    def add_score(self, score, run):
+    def show_graph(self, y: pd.DataFrame):
+        self.fig = make_subplots(specs=[[{"secondary_y": True}]])
+        self.fig.add_trace(go.Scatter(x=y.index, y=y.score, name="score"))
+        self.fig.add_trace(go.Scatter(x=y.index, y=y.m, name="mean"))
+        self.fig.add_trace(go.Scatter(x=y.index, y=y.expl, name="expl"))
+        self.fig.add_trace(go.Scatter(x=y.index, y=y.time, name="time"), secondary_y=True)
+        self.fig.show()
+
+    def add_score(self, score: int, run: int, exploration_rate: float, memory_size: int, refresh=False):
+
         self._save_csv(SCORES_CSV_PATH, score)
         self._save_png(input_path=SCORES_CSV_PATH,
                        output_path=SCORES_PNG_PATH,
@@ -38,9 +59,19 @@ class ScoreLogger:
                        show_legend=True)
         self.scores.append(score)
         mean_score = mean(self.scores)
-        print("Scores: (min: " + str(min(self.scores)) + ", avg: " + str(mean_score) + ", max: " + str(max(self.scores)) + ")\n")
+        self.averages.append(mean_score)
+        self.exp_rates.append(exploration_rate)
+        td = time.time() - self.t1
+        self.time_hist.append(td)
+
+        if refresh:
+            # Here we start a new thread as because of a bug in Plotly, sometimes the fig.show() doesn't return at all and process freezes
+            y = pd.DataFrame(zip(self.scores, self.averages, self.exp_rates, self.time_hist), columns=['score', 'm', 'expl', 'time'])
+            threading.Thread(target=self.show_graph, args=(y,)).start()
+        print(f"Scores: (min: {min(self.scores)!s} , avg: {mean_score!s}, max: {max(self.scores)!s}, mem_sz: {memory_size!s}, "
+              f"time: {td})\n")
         if mean_score >= AVERAGE_SCORE_TO_SOLVE and len(self.scores) >= CONSECUTIVE_RUNS_TO_SOLVE:
-            solve_score = run-CONSECUTIVE_RUNS_TO_SOLVE
+            solve_score = run - CONSECUTIVE_RUNS_TO_SOLVE
             print("Solved in " + str(solve_score) + " runs, " + str(run) + " total runs.")
             self._save_csv(SOLVED_CSV_PATH, solve_score)
             self._save_png(input_path=SOLVED_CSV_PATH,
@@ -65,13 +96,14 @@ class ScoreLogger:
                     continue
                 x.append(int(j))
                 y.append(int(data[i][0]))
-                j+=1
+                j += 1
 
         plt.subplots()
         plt.plot(x, y, label="score per run")
 
         average_range = average_of_n_last if average_of_n_last is not None else len(x)
-        plt.plot(x[-average_range:], [np.mean(y[-average_range:])] * len(y[-average_range:]), linestyle="--", label="last " + str(average_range) + " runs average")
+        plt.plot(x[-average_range:], [np.mean(y[-average_range:])] * len(y[-average_range:]), linestyle="--",
+                 label="last " + str(average_range) + " runs average")
 
         if show_goal:
             plt.plot(x, [AVERAGE_SCORE_TO_SOLVE] * len(x), linestyle=":", label=str(AVERAGE_SCORE_TO_SOLVE) + " score average goal")
@@ -80,7 +112,7 @@ class ScoreLogger:
             trend_x = x[1:]
             z = np.polyfit(np.array(trend_x), np.array(y[1:]), 1)
             p = np.poly1d(z)
-            plt.plot(trend_x, p(trend_x), linestyle="-.",  label="trend")
+            plt.plot(trend_x, p(trend_x), linestyle="-.", label="trend")
 
         plt.title(self.env_name)
         plt.xlabel(x_label)
